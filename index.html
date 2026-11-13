@@ -1,12 +1,12 @@
 <!doctype html>
-<html lang="en">
+<html lang="vi">
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
 <meta name="color-scheme" content="dark">
 <meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'self' 'unsafe-inline'; style-src 'unsafe-inline'; connect-src https://ntfy.sh wss://ntfy.sh; img-src data:">
 <meta name="referrer" content="no-referrer">
-<title>Castly</title>
+<title>CastlyTV</title>
 <style>
 :root{color-scheme:dark}*{box-sizing:border-box}
 body{margin:0;background:#0B0D12;color:#fff;font:17px/1.4 -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif;
@@ -39,7 +39,7 @@ li.err .meta{color:#FF6B61}li.ok .meta{color:#34C759}
 </head>
 <body>
 <main>
-<h1 id="h">Send files to TV</h1>
+<h1 id="h">Gửi tệp lên TV</h1>
 <p class="sub" id="sub"></p>
 <div class="conn" id="conn"><span class="dot"></span><div><b id="connT"></b><small id="connS"></small></div></div>
 <div class="warn hidden" id="ios"></div>
@@ -54,40 +54,24 @@ li.err .meta{color:#FF6B61}li.ok .meta{color:#34C759}
 (function(){
 'use strict';
 var C=window.Castly,PROTO=1,CONNECT_MS=40000,MAX_RECONNECTS=5,BUF_HIGH=4*1048576,BUF_LOW=1048576,SLICE=1048576;
-var T={
-en:{h:"Send files to TV",sub:"Over the Internet — the file goes straight to your TV, never through a server.",
-pick:"Choose files",wait:"Waiting…",hash:"Preparing… ",up:"Sending… ",verify:"Checking on the TV…",done:"Saved on the TV ✓",
-cancel:"Cancel",cancelled:"Cancelled",again:"Send again",end:"I'm done",ended:"Session ended. Scan a new code on the TV to send more.",
-c_sig:"Contacting your TV…",c_ice:"Connecting…",c_ice2:"Trying another way (peer-to-peer)…",c_ok:"Connected",c_route:{direct:"direct connection",p2p:"peer-to-peer",lan:"same network",unknown:"secure connection"},
-c_re:"Connection lost — reconnecting…",c_fail:"Could not connect over the Internet",
-c_fail2:"These two networks can't reach each other directly (Castly never relays files through a server). Try again, try another network, or use Wi-Fi/LAN mode on the TV.",
-retry:"Try again",busy:"The TV is already receiving from another phone.",expired:"This code has expired. Press “New code” on the TV and scan again.",
-closed:"The TV ended this session.",noqr:"Open this page by scanning the Internet QR code on your TV.",ver:"This page and the TV app versions don't match. Update Castly.",
-nosupport:"This browser can't do secure peer-to-peer transfers. Use Chrome or Safari.",
-ios:"iPhone: keep this page open and the screen on until every file shows ✓ — Safari pauses transfers in the background.",
-note:"Max %s per file. Files are saved to the CastlyFiles folder on the TV.",
-e:{too_large:"File is too large (max %s)",type:"File type not supported",storage:"TV is out of storage",empty:"File is empty",limit:"Too many files in this session",
-content_mismatch:"File content doesn't match its type",hash_mismatch:"File was damaged in transit",size_mismatch:"File was damaged in transit",protocol:"Transfer error",
-bad_request:"Transfer error",read:"Could not read this file on the phone",cancelled:"Cancelled",conn:"Connection lost"}},
-vi:{h:"Gửi file lên TV",sub:"Qua Internet — file đi thẳng tới TV của bạn, không qua máy chủ nào.",
-pick:"Chọn file",wait:"Đang chờ…",hash:"Đang chuẩn bị… ",up:"Đang gửi… ",verify:"TV đang kiểm tra…",done:"Đã lưu trên TV ✓",
+var t={h:"Gửi tệp lên TV",sub:"Qua Internet — tệp đi thẳng tới TV của bạn, không qua máy chủ nào.",
+pick:"Chọn tệp",wait:"Đang chờ…",hash:"Đang chuẩn bị… ",up:"Đang gửi… ",verify:"TV đang kiểm tra…",done:"Đã lưu trên TV ✓",
 cancel:"Hủy",cancelled:"Đã hủy",again:"Gửi lại",end:"Tôi đã gửi xong",ended:"Đã kết thúc phiên. Quét mã mới trên TV để gửi tiếp.",
-c_sig:"Đang liên hệ TV…",c_ice:"Đang kết nối…",c_ice2:"Đang thử cách khác (P2P)…",c_ok:"Đã kết nối",c_route:{direct:"kết nối trực tiếp",p2p:"P2P",lan:"cùng mạng",unknown:"kết nối bảo mật"},
+c_sig:"Đang liên hệ TV…",c_ice:"Đang kết nối…",c_ice2:"Đang thử cách khác (kết nối ngang hàng)…",c_ok:"Đã kết nối",c_route:{direct:"kết nối trực tiếp",p2p:"ngang hàng",lan:"cùng mạng",unknown:"kết nối bảo mật"},
 c_re:"Mất kết nối — đang kết nối lại…",c_fail:"Không kết nối được qua Internet",
-c_fail2:"Hai mạng này không kết nối thẳng được với nhau (Castly không bao giờ chuyển file qua máy chủ). Hãy thử lại, đổi mạng khác, hoặc dùng chế độ Wi-Fi/LAN trên TV.",
-retry:"Thử lại",busy:"TV đang nhận file từ một điện thoại khác.",expired:"Mã này đã hết hạn. Bấm “Mã mới” trên TV rồi quét lại.",
-closed:"TV đã kết thúc phiên này.",noqr:"Hãy mở trang này bằng cách quét mã QR Internet trên TV.",ver:"Phiên bản trang và ứng dụng TV không khớp. Hãy cập nhật Castly.",
-nosupport:"Trình duyệt này không hỗ trợ truyền file P2P bảo mật. Hãy dùng Chrome hoặc Safari.",
-ios:"iPhone: giữ trang này mở và màn hình sáng cho tới khi mọi file có dấu ✓ — Safari tạm dừng truyền khi chạy nền.",
-note:"Tối đa %s mỗi file. File được lưu vào thư mục CastlyFiles trên TV.",
-e:{too_large:"File quá lớn (tối đa %s)",type:"Không hỗ trợ loại file này",storage:"TV hết dung lượng",empty:"File rỗng",limit:"Đã gửi quá nhiều file trong phiên",
-content_mismatch:"Nội dung file không đúng loại",hash_mismatch:"File bị hỏng khi truyền",size_mismatch:"File bị hỏng khi truyền",protocol:"Lỗi truyền file",
-bad_request:"Lỗi truyền file",read:"Không đọc được file này trên điện thoại",cancelled:"Đã hủy",conn:"Mất kết nối"}}};
-var L=((navigator.language||"en").slice(0,2)==="vi")?"vi":"en",t=T[L];
+c_fail2:"Hai mạng này không kết nối thẳng được với nhau (CastlyTV không bao giờ chuyển tệp qua máy chủ). Hãy thử lại, đổi mạng khác, hoặc dùng chế độ Wi-Fi/LAN trên TV.",
+retry:"Thử lại",busy:"TV đang nhận tệp từ một điện thoại khác.",expired:"Mã này đã hết hạn. Bấm “Mã mới” trên TV rồi quét lại.",
+closed:"TV đã kết thúc phiên này.",noqr:"Hãy mở trang này bằng cách quét mã QR Internet trên TV.",ver:"Phiên bản trang và ứng dụng TV không khớp. Hãy cập nhật CastlyTV.",
+nosupport:"Trình duyệt này không hỗ trợ truyền tệp ngang hàng bảo mật. Hãy dùng Chrome hoặc Safari.",
+ios:"iPhone: giữ trang này mở và màn hình sáng cho tới khi mọi tệp có dấu ✓ — Safari tạm dừng truyền khi chạy nền.",
+note:"Tối đa %s mỗi tệp. Tệp được lưu vào thư mục CastlyFiles trên TV.",
+e:{too_large:"Tệp quá lớn (tối đa %s)",type:"Không hỗ trợ loại tệp này",storage:"TV hết dung lượng",empty:"Tệp rỗng",limit:"Đã gửi quá nhiều tệp trong phiên",
+content_mismatch:"Nội dung tệp không đúng loại",hash_mismatch:"Tệp bị hỏng khi truyền",size_mismatch:"Tệp bị hỏng khi truyền",protocol:"Lỗi truyền tệp",
+bad_request:"Lỗi truyền tệp",read:"Không đọc được tệp này trên điện thoại",cancelled:"Đã hủy",conn:"Mất kết nối"}};
 function g(i){return document.getElementById(i)}
 function fmt(s,a){return s.replace("%s",a)}
 function size(n){return n<1048576?Math.max(1,Math.round(n/1024))+" KB":(n/1048576).toFixed(n<10485760?1:0)+" MB"}
-document.documentElement.lang=L;g("h").textContent=t.h;g("sub").textContent=t.sub;g("pick").textContent=t.pick;g("end").textContent=t.end;
+g("h").textContent=t.h;g("sub").textContent=t.sub;g("pick").textContent=t.pick;g("end").textContent=t.end;
 
 // ─── Session parameters: from the QR #fragment, then kept in sessionStorage so a refresh still works ───
 var P=null;
