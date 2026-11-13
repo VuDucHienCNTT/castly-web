@@ -122,6 +122,7 @@ function onSignal(text){C.open(key,toMe,text).then(function(m){
    pc.setRemoteDescription({type:"answer",sdp:m.sdp}).then(function(){(m.cands||[]).forEach(addCand)}).catch(function(){});
   }else if(m.ty==="cand"&&pc){(m.cands||[]).forEach(addCand);if(!connected)conn("",t.c_ice2)}
   else if(m.ty==="busy"&&m.re===offerN){stopConnecting();conn("bad",t.busy)}
+  else if(m.ty==="closed"&&!connected){tvClosed=true;stopConnecting();conn("bad",t.closed);var r=g("retryBtn");if(r)r.classList.add("hidden");sub&&sub.close()}
  }).catch(function(){})}
 function addCand(c){if(!pc||!c||!c.c)return;pc.addIceCandidate({candidate:c.c,sdpMid:c.m,sdpMLineIndex:c.i}).catch(function(){})}
 
@@ -147,11 +148,30 @@ function connect(){
    pc.addEventListener("icegatheringstatechange",function(){if(pc.iceGatheringState==="complete"){clearTimeout(to);r()}})})})
  .then(function(){if(myPc!==pc)return;offerSent=true;conn("",t.c_ice);
    offerN=nonce();   // set before publishing: the answer may arrive before the POST resolves
-   return signal({ty:"offer",n:offerN,sdp:pc.localDescription.sdp})})
+   return sendOffer(splitSdp(pc.localDescription.sdp))})
  .catch(function(){if(myPc===pc)fail()});
  connectTimer=setTimeout(function(){if(myPc===pc&&!connected)fail()},CONNECT_MS);
  phaseTimer=setTimeout(function(){if(myPc===pc&&!connected)conn("",t.c_ice2)},9000);
 }
+/** Moves a=candidate lines out of the SDP into {c,m,i} objects (phones with many networks exceed ntfy's 4 KB otherwise). */
+function splitSdp(sdp){var out=[],cands=[],mid=null,idx=-1;
+ sdp.split("\r\n").forEach(function(l){
+  if(l.indexOf("m=")===0){idx++;mid=null}
+  if(l.indexOf("a=mid:")===0)mid=l.slice(6);
+  if(l.indexOf("a=candidate:")===0){cands.push({c:l.slice(2),m:mid,i:Math.max(0,idx)});return}
+  if(l==="a=end-of-candidates")return;
+  out.push(l)});
+ cands.forEach(function(c){if(c.m===null)c.m="0"});
+ return {sdp:out.join("\r\n"),cands:cands}}
+/** The offer carries as many candidates as fit in one envelope; the rest follow in small "cand" messages. */
+function sendOffer(parts){var first=parts.cands.slice(),rest=[];
+ function attempt(){var obj={ty:"offer",peer:peerId,n:offerN,ts:Date.now(),sdp:parts.sdp,cands:first};
+  return C.seal(key,toTv,obj).then(function(env){
+   if(env.length>3800&&first.length){rest.unshift(first.pop());return attempt()}
+   return C.publish(toTv,env)})}
+ return attempt().then(function(){return sendCands(rest)})}
+function sendCands(list){if(!list.length)return Promise.resolve();var b=list.splice(0,6);
+ return signal({ty:"cand",cands:b}).then(function(){return sendCands(list)})}
 function closePc(){try{dc&&dc.close()}catch(x){}try{pc&&pc.close()}catch(x){}dc=null;pc=null;clearTimeout(connectTimer);clearTimeout(phaseTimer)}
 function stopConnecting(){closePc();connected=false;pickEnabled(false)}
 function fail(){
