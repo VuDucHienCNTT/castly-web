@@ -1,0 +1,128 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'self' 'unsafe-inline'; style-src 'unsafe-inline'; connect-src https://ntfy.sh wss://ntfy.sh">
+<meta name="referrer" content="no-referrer">
+<title>Castly network test</title>
+<style>
+:root{color-scheme:dark}*{box-sizing:border-box}
+body{margin:0;background:#0B0D12;color:#fff;font:16px/1.45 -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif;padding:max(16px,env(safe-area-inset-top)) 16px 32px}
+main{max-width:720px;margin:0 auto}h1{font-size:24px;margin:4px 0 12px}
+.card{background:#141821;border:1px solid #232A38;border-radius:14px;padding:14px;margin:12px 0}
+button,select{font:inherit;padding:10px 16px;border-radius:12px;border:0;background:#5B6CFF;color:#fff;font-weight:600;margin:4px 6px 4px 0}
+button:disabled{background:#232A38;color:#6B7385}select{background:#1E2432}
+code,textarea{word-break:break-all;font:13px ui-monospace,Menlo,Consolas,monospace}
+textarea{width:100%;min-height:70px;background:#0F1219;color:#C9D0DF;border:1px solid #232A38;border-radius:10px;padding:8px}
+#log{white-space:pre-wrap;font:12px ui-monospace,Menlo,Consolas,monospace;color:#9AA3B5;max-height:50vh;overflow:auto}
+.kv{display:grid;grid-template-columns:max-content 1fr;gap:4px 12px}.kv b{color:#9AA3B5;font-weight:500}
+</style>
+</head>
+<body>
+<main>
+<h1>Castly – network test (Phase 1 PoC)</h1>
+<p style="color:#9AA3B5">Tests ntfy signaling + STUN + WebRTC DataChannel between two browsers, exactly like the
+TV↔phone design: the receiver first reveals only host candidates (DIRECT phase, 5 s), then STUN candidates (P2P phase).
+No TURN. No file leaves the two devices.</p>
+<div class="card" id="recvCard" hidden>
+ <b>Receiver</b> (plays the TV). Open this link on the sending device (different network for an Internet test):
+ <textarea id="link" readonly></textarea>
+ <button id="copy">Copy link</button>
+</div>
+<div class="card" id="sendCard" hidden>
+ <b>Sender</b> (plays the phone).
+ <div><select id="size"><option value="1">1 MB</option><option value="10" selected>10 MB</option><option value="50">50 MB</option><option value="100">100 MB</option></select>
+ <button id="send" disabled>Send test data</button></div>
+</div>
+<div class="card kv" id="stats">
+ <b>Role</b><span id="sRole">–</span><b>Signaling</b><span id="sSig">–</span><b>ICE</b><span id="sIce">–</span>
+ <b>Route</b><span id="sRoute">–</span><b>Connect time</b><span id="sConn">–</span><b>Transfer</b><span id="sXfer">–</span>
+</div>
+<div class="card"><div id="log"></div></div>
+</main>
+<script src="signal.js"></script>
+<script>
+(function(){
+var C=window.Castly,t0=Date.now(),FRAME=16384,DIRECT_MS=5000;
+function g(i){return document.getElementById(i)}
+function log(s){var l=g('log');l.textContent+=((Date.now()-t0)/1000).toFixed(2)+'s  '+s+'\n';l.scrollTop=l.scrollHeight}
+function nonce(){return C.randomId(16)}
+var q=new URLSearchParams(location.hash.slice(1)),role=q.get('t')?'send':'recv';
+g('sRole').textContent=role;
+var key,base,toRecv,toSend,pc,dc,sub,connStart=0,seen={};
+
+function route(){ if(!pc||!pc.getStats)return; pc.getStats().then(function(st){var pair=null,loc={},rem={};
+  st.forEach(function(r){if(r.type==='transport'&&r.selectedCandidatePairId)pair=st.get(r.selectedCandidatePairId);
+   if(r.type==='candidate-pair'&&r.nominated&&r.state==='succeeded'&&!pair)pair=r});
+  if(!pair)return; st.forEach(function(r){if(r.id===pair.localCandidateId)loc=r;if(r.id===pair.remoteCandidateId)rem=r});
+  var kind=(loc.candidateType==='host'&&rem.candidateType==='host')?'direct (host↔host)':(loc.candidateType==='relay'||rem.candidateType==='relay')?'RELAY (unexpected!)':'p2p ('+loc.candidateType+'↔'+rem.candidateType+')';
+  g('sRoute').textContent=kind+' '+(loc.protocol||'')+' '+(loc.address||loc.ip||'?')+' → '+(rem.address||rem.ip||'?');log('selected pair: '+kind)})}
+
+function watch(){
+ pc.oniceconnectionstatechange=function(){g('sIce').textContent=pc.iceConnectionState;log('ice '+pc.iceConnectionState);
+  if(pc.iceConnectionState==='connected'||pc.iceConnectionState==='completed'){g('sConn').textContent=((Date.now()-connStart)/1000).toFixed(2)+' s';route()}
+  if(pc.iceConnectionState==='failed')log('ICE FAILED → P2P not possible on this network pair (no TURN by design)')};
+}
+function send(topic,obj){obj.n=nonce();obj.ts=Date.now();return C.seal(key,topic,obj).then(function(env){log('→ '+obj.ty+' ('+env.length+' B)');return C.publish(topic,env)}).catch(function(e){log('publish failed: '+e.message)})}
+function onText(topic,handler){return function(text){C.open(key,topic,text).then(function(m){if(seen[m.n])return;seen[m.n]=1;log('← '+m.ty);handler(m)}).catch(function(){log('ignored undecryptable message')})}}
+
+function startRecv(){
+ var raw=C.newRawKey();base=C.randomId(26);toRecv=base+'t';toSend=base+'p';g('recvCard').hidden=false;
+ g('link').value=location.origin+location.pathname+'#v=1&t='+base+'&k='+C.b64u(raw)+'&e='+(Math.floor(Date.now()/1000)+600);
+ g('copy').onclick=function(){g('link').select();try{navigator.clipboard.writeText(g('link').value)}catch(e){document.execCommand('copy')}};
+ C.importKey(raw).then(function(k){key=k;sub=C.subscribe(toRecv,Date.now()/1000-5,onText(toRecv,onRecvMsg),function(s){g('sSig').textContent='ntfy '+s})});
+ var peer=null,pending=[],revealed=false,timer=0,hash=null,got=0,tStart=0;
+ function revealAll(){if(revealed)return;revealed=true;if(pending.length){log('DIRECT phase over → revealing '+pending.length+' STUN candidate(s)');send(toSend,{ty:'cand',cands:pending.splice(0)})}}
+ function onRecvMsg(m){
+  if(m.ty!=='offer')return; if(peer&&peer!==m.peer){send(toSend,{ty:'busy',re:m.n});return}
+  peer=m.peer;connStart=Date.now();if(pc)pc.close();revealed=false;pending=[];clearTimeout(timer);
+  pc=new RTCPeerConnection({iceServers:C.ICE_SERVERS});watch();var hostC=[],sentAnswer=false;
+  pc.onicecandidate=function(e){if(!e.candidate)return;var c={c:e.candidate.candidate,m:e.candidate.sdpMid,i:e.candidate.sdpMLineIndex},ty=C.candidateType(c.c);
+   log('local candidate '+ty);if(ty==='host'&&!sentAnswer)hostC.push(c);else if(ty==='host')send(toSend,{ty:'cand',cands:[c]});else if(revealed)send(toSend,{ty:'cand',cands:[c]});else pending.push(c)};
+  pc.ondatachannel=function(e){dc=e.channel;dc.binaryType='arraybuffer';dc.onopen=function(){log('DataChannel OPEN');clearTimeout(timer)};
+   dc.onmessage=function(ev){if(typeof ev.data==='string'){var c=JSON.parse(ev.data);
+     if(c.ty==='start'){hash=new C.Sha256();got=0;tStart=Date.now();log('receiving '+c.size+' B')}
+     if(c.ty==='end'){var ms=Date.now()-tStart,h=hash.hex(),ok=h===c.sha256;g('sXfer').textContent=(got/1048576).toFixed(1)+' MB in '+(ms/1000).toFixed(1)+' s = '+(got/1048576/(ms/1000)).toFixed(2)+' MB/s, hash '+(ok?'OK':'MISMATCH');dc.send(JSON.stringify({ty:'result',ok:ok,ms:ms,bytes:got}))}
+    }else{var b=new Uint8Array(ev.data);hash.update(b.subarray(5));got+=b.length-5}}};
+  pc.setRemoteDescription({type:'offer',sdp:m.sdp}).then(function(){return pc.createAnswer()}).then(function(a){return pc.setLocalDescription(a)})
+   .then(function(){return new Promise(function(r){setTimeout(r,1200)})})
+   .then(function(){sentAnswer=true;log('DIRECT phase: answer with '+hostC.length+' host candidate(s)');send(toSend,{ty:'answer',re:m.n,sdp:pc.localDescription.sdp.replace(/a=candidate:.*\r\n/g,''),cands:hostC});
+    timer=setTimeout(revealAll,DIRECT_MS)});
+ }
+}
+
+function startSend(){
+ base=q.get('t');toRecv=base+'t';toSend=base+'p';g('sendCard').hidden=false;var peer=C.randomId(16),offerN='';
+ if(+q.get('e')<Date.now()/1000)log('WARNING: link expired');
+ C.importKey(C.unb64u(q.get('k'))).then(function(k){key=k;sub=C.subscribe(toSend,Date.now()/1000-30,onText(toSend,onSendMsg),function(s){g('sSig').textContent='ntfy '+s});
+  pc=new RTCPeerConnection({iceServers:C.ICE_SERVERS});watch();dc=pc.createDataChannel('castly',{ordered:true});dc.binaryType='arraybuffer';
+  dc.bufferedAmountLowThreshold=1048576;dc.onopen=function(){log('DataChannel OPEN');g('send').disabled=false};
+  dc.onmessage=function(e){var r=JSON.parse(e.data);if(r.ty==='result')log('receiver says: hash '+(r.ok?'OK':'MISMATCH')+', '+(r.bytes/1048576/(r.ms/1000)).toFixed(2)+' MB/s')};
+  pc.onicecandidate=function(e){if(e.candidate)log('local candidate '+C.candidateType(e.candidate.candidate))};
+  connStart=Date.now();
+  return pc.createOffer().then(function(o){return pc.setLocalDescription(o)}).then(function(){return new Promise(function(r){
+   if(pc.iceGatheringState==='complete')return r();var t=setTimeout(r,3000);pc.onicegatheringstatechange=function(){if(pc.iceGatheringState==='complete'){clearTimeout(t);r()}}})})
+  .then(function(){var o={ty:'offer',peer:peer,sdp:pc.localDescription.sdp};return send(toRecv,o).then(function(){offerN=o.n})});
+ });
+ function onSendMsg(m){
+  if(m.ty==='busy'){log('receiver is busy with another sender');return}
+  if(m.ty==='answer'&&m.re===offerN){pc.setRemoteDescription({type:'answer',sdp:m.sdp}).then(function(){(m.cands||[]).forEach(add)})}
+  if(m.ty==='cand')(m.cands||[]).forEach(add);
+ }
+ function add(c){log('remote candidate '+C.candidateType(c.c));pc.addIceCandidate({candidate:c.c,sdpMid:c.m,sdpMLineIndex:c.i}).catch(function(e){log('addIceCandidate: '+e.message)})}
+ g('send').onclick=function(){var total=+g('size').value*1048576,sent=0,idx=0,h=new C.Sha256(),block=new Uint8Array(65536),t=Date.now();
+  g('send').disabled=true;dc.send(JSON.stringify({ty:'start',size:total}));
+  function pump(){while(sent<total){if(dc.bufferedAmount>4*1048576){dc.onbufferedamountlow=function(){dc.onbufferedamountlow=null;pump()};return}
+    if(sent%65536===0){crypto.getRandomValues(block)}var n=Math.min(FRAME,total-sent),f=new Uint8Array(5+n),off=sent%65536;
+    f[0]=1;f[1]=idx>>>24;f[2]=idx>>>16;f[3]=idx>>>8;f[4]=idx;f.set(block.subarray(off,off+n),5);h.update(f.subarray(5));dc.send(f.buffer);sent+=n;idx++;
+    if(idx%64===0)g('sXfer').textContent='sending '+Math.round(sent*100/total)+'%'}
+   dc.send(JSON.stringify({ty:'end',sha256:h.hex()}));g('sXfer').textContent='sent '+(total/1048576)+' MB in '+((Date.now()-t)/1000).toFixed(1)+' s (local view)';g('send').disabled=false}
+  pump()};
+}
+if(!window.RTCPeerConnection||!window.crypto||!crypto.subtle){log('This browser lacks RTCPeerConnection or WebCrypto (needs HTTPS).');return}
+role==='send'?startSend():startRecv();
+})();
+</script>
+</body>
+</html>

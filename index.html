@@ -1,0 +1,263 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<meta name="color-scheme" content="dark">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'self' 'unsafe-inline'; style-src 'unsafe-inline'; connect-src https://ntfy.sh wss://ntfy.sh; img-src data:">
+<meta name="referrer" content="no-referrer">
+<title>Castly</title>
+<style>
+:root{color-scheme:dark}*{box-sizing:border-box}
+body{margin:0;background:#0B0D12;color:#fff;font:17px/1.4 -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif;
+padding:max(20px,env(safe-area-inset-top)) max(16px,env(safe-area-inset-right)) max(32px,env(safe-area-inset-bottom)) max(16px,env(safe-area-inset-left))}
+main{max-width:560px;margin:0 auto}
+h1{font-size:clamp(22px,6vw,28px);margin:6px 0 4px}
+p.sub{color:#9AA3B5;margin:0 0 18px}
+.conn{display:flex;gap:12px;align-items:flex-start;background:#141821;border:1px solid #232A38;border-radius:16px;padding:14px 16px;margin-bottom:16px}
+.dot{flex:none;width:12px;height:12px;border-radius:6px;margin-top:6px;background:#FFD60A}
+.conn.ok .dot{background:#34C759}.conn.bad .dot{background:#FF3B30}
+.conn b{display:block}.conn small{color:#9AA3B5;font-size:14px;display:block;margin-top:2px}
+.pick{display:block;width:100%;padding:18px;border:0;border-radius:20px;background:#5B6CFF;color:#fff;font-weight:600;font-size:19px;font-family:inherit;text-align:center}
+.pick:active{background:#4553D6}.pick.off{background:#232A38;color:#6B7385;pointer-events:none}
+input[type=file]{display:none}
+ul{list-style:none;margin:18px 0 0;padding:0}
+li{background:#141821;border:1px solid #232A38;border-radius:16px;padding:14px 16px;margin-bottom:10px}
+.name{font-weight:600;word-break:break-all}
+.meta{color:#9AA3B5;font-size:14px;margin-top:2px}
+.bar{height:6px;background:#232A38;border-radius:3px;margin-top:10px;overflow:hidden}
+.bar i{display:block;height:100%;width:0;background:#5B6CFF;transition:width .2s}
+li.ok .bar i{background:#34C759}li.err .bar i{background:#FF3B30}
+li.err .meta{color:#FF6B61}li.ok .meta{color:#34C759}
+.row{display:flex;gap:8px;flex-wrap:wrap;margin-top:10px}
+.btn{padding:9px 16px;border:1px solid #3A4357;border-radius:12px;background:transparent;color:#C9D0DF;font-weight:600;font-size:15px;font-family:inherit}
+.btn.primary{background:#5B6CFF;border-color:#5B6CFF;color:#fff}.btn:active{background:#232A38}
+.note{color:#6B7385;font-size:14px;margin-top:20px;text-align:center}
+.warn{background:#2A2414;border:1px solid #5C4B1A;color:#FFD98A;border-radius:12px;padding:10px 12px;font-size:14px;margin:0 0 16px}
+.hidden{display:none!important}
+</style>
+</head>
+<body>
+<main>
+<h1 id="h">Send files to TV</h1>
+<p class="sub" id="sub"></p>
+<div class="conn" id="conn"><span class="dot"></span><div><b id="connT"></b><small id="connS"></small></div></div>
+<div class="warn hidden" id="ios"></div>
+<label class="pick off" id="pick" for="f"></label>
+<input type="file" id="f" multiple>
+<ul id="list"></ul>
+<div class="row hidden" id="endRow"><button type="button" class="btn" id="end"></button></div>
+<p class="note" id="note"></p>
+</main>
+<script src="signal.js"></script>
+<script>
+(function(){
+'use strict';
+var C=window.Castly,PROTO=1,CONNECT_MS=40000,MAX_RECONNECTS=5,BUF_HIGH=4*1048576,BUF_LOW=1048576,SLICE=1048576;
+var T={
+en:{h:"Send files to TV",sub:"Over the Internet — the file goes straight to your TV, never through a server.",
+pick:"Choose files",wait:"Waiting…",hash:"Preparing… ",up:"Sending… ",verify:"Checking on the TV…",done:"Saved on the TV ✓",
+cancel:"Cancel",cancelled:"Cancelled",again:"Send again",end:"I'm done",ended:"Session ended. Scan a new code on the TV to send more.",
+c_sig:"Contacting your TV…",c_ice:"Connecting…",c_ice2:"Trying another way (peer-to-peer)…",c_ok:"Connected",c_route:{direct:"direct connection",p2p:"peer-to-peer",lan:"same network",unknown:"secure connection"},
+c_re:"Connection lost — reconnecting…",c_fail:"Could not connect over the Internet",
+c_fail2:"These two networks can't reach each other directly (Castly never relays files through a server). Try again, try another network, or use Wi-Fi/LAN mode on the TV.",
+retry:"Try again",busy:"The TV is already receiving from another phone.",expired:"This code has expired. Press “New code” on the TV and scan again.",
+closed:"The TV ended this session.",noqr:"Open this page by scanning the Internet QR code on your TV.",ver:"This page and the TV app versions don't match. Update Castly.",
+nosupport:"This browser can't do secure peer-to-peer transfers. Use Chrome or Safari.",
+ios:"iPhone: keep this page open and the screen on until every file shows ✓ — Safari pauses transfers in the background.",
+note:"Max %s per file. Files are saved to the CastlyFiles folder on the TV.",
+e:{too_large:"File is too large (max %s)",type:"File type not supported",storage:"TV is out of storage",empty:"File is empty",limit:"Too many files in this session",
+content_mismatch:"File content doesn't match its type",hash_mismatch:"File was damaged in transit",size_mismatch:"File was damaged in transit",protocol:"Transfer error",
+bad_request:"Transfer error",read:"Could not read this file on the phone",cancelled:"Cancelled",conn:"Connection lost"}},
+vi:{h:"Gửi file lên TV",sub:"Qua Internet — file đi thẳng tới TV của bạn, không qua máy chủ nào.",
+pick:"Chọn file",wait:"Đang chờ…",hash:"Đang chuẩn bị… ",up:"Đang gửi… ",verify:"TV đang kiểm tra…",done:"Đã lưu trên TV ✓",
+cancel:"Hủy",cancelled:"Đã hủy",again:"Gửi lại",end:"Tôi đã gửi xong",ended:"Đã kết thúc phiên. Quét mã mới trên TV để gửi tiếp.",
+c_sig:"Đang liên hệ TV…",c_ice:"Đang kết nối…",c_ice2:"Đang thử cách khác (P2P)…",c_ok:"Đã kết nối",c_route:{direct:"kết nối trực tiếp",p2p:"P2P",lan:"cùng mạng",unknown:"kết nối bảo mật"},
+c_re:"Mất kết nối — đang kết nối lại…",c_fail:"Không kết nối được qua Internet",
+c_fail2:"Hai mạng này không kết nối thẳng được với nhau (Castly không bao giờ chuyển file qua máy chủ). Hãy thử lại, đổi mạng khác, hoặc dùng chế độ Wi-Fi/LAN trên TV.",
+retry:"Thử lại",busy:"TV đang nhận file từ một điện thoại khác.",expired:"Mã này đã hết hạn. Bấm “Mã mới” trên TV rồi quét lại.",
+closed:"TV đã kết thúc phiên này.",noqr:"Hãy mở trang này bằng cách quét mã QR Internet trên TV.",ver:"Phiên bản trang và ứng dụng TV không khớp. Hãy cập nhật Castly.",
+nosupport:"Trình duyệt này không hỗ trợ truyền file P2P bảo mật. Hãy dùng Chrome hoặc Safari.",
+ios:"iPhone: giữ trang này mở và màn hình sáng cho tới khi mọi file có dấu ✓ — Safari tạm dừng truyền khi chạy nền.",
+note:"Tối đa %s mỗi file. File được lưu vào thư mục CastlyFiles trên TV.",
+e:{too_large:"File quá lớn (tối đa %s)",type:"Không hỗ trợ loại file này",storage:"TV hết dung lượng",empty:"File rỗng",limit:"Đã gửi quá nhiều file trong phiên",
+content_mismatch:"Nội dung file không đúng loại",hash_mismatch:"File bị hỏng khi truyền",size_mismatch:"File bị hỏng khi truyền",protocol:"Lỗi truyền file",
+bad_request:"Lỗi truyền file",read:"Không đọc được file này trên điện thoại",cancelled:"Đã hủy",conn:"Mất kết nối"}}};
+var L=((navigator.language||"en").slice(0,2)==="vi")?"vi":"en",t=T[L];
+function g(i){return document.getElementById(i)}
+function fmt(s,a){return s.replace("%s",a)}
+function size(n){return n<1048576?Math.max(1,Math.round(n/1024))+" KB":(n/1048576).toFixed(n<10485760?1:0)+" MB"}
+document.documentElement.lang=L;g("h").textContent=t.h;g("sub").textContent=t.sub;g("pick").textContent=t.pick;g("end").textContent=t.end;
+
+// ─── Session parameters: from the QR #fragment, then kept in sessionStorage so a refresh still works ───
+var P=null;
+(function(){
+ var h=new URLSearchParams(location.hash.slice(1));
+ if(h.get("t")&&h.get("k")){P={v:h.get("v"),t:h.get("t"),k:h.get("k"),e:+h.get("e")||0};
+  try{sessionStorage.setItem("castly-session",JSON.stringify(P))}catch(x){}
+  try{history.replaceState(null,"",location.pathname)}catch(x){}   // keep the secret out of the address bar and history
+ }else{try{P=JSON.parse(sessionStorage.getItem("castly-session")||"null")}catch(x){P=null}}
+})();
+var MAX=104857600;g("note").textContent=fmt(t.note,size(MAX));
+
+function conn(state,title,sub){var c=g("conn");c.className="conn"+(state?" "+state:"");g("connT").textContent=title;g("connS").textContent=sub||""}
+function pickEnabled(on){g("pick").className="pick"+(on?"":" off")}
+
+if(!P){conn("bad",t.noqr);return}
+if(String(P.v)!==String(PROTO)){conn("bad",t.ver);return}
+if(!window.RTCPeerConnection||!window.crypto||!crypto.subtle||!window.WebSocket){conn("bad",t.nosupport);return}
+if(/iP(hone|ad|od)/.test(navigator.userAgent)||(navigator.platform==="MacIntel"&&navigator.maxTouchPoints>1)){g("ios").textContent=t.ios;g("ios").classList.remove("hidden")}
+
+var key,peerId,toTv=P.t+"t",toMe=P.t+"p",sub=null,pc=null,dc=null,offerN="",seen={},connected=false,everConnected=false,
+ reconnects=0,connectTimer=0,phaseTimer=0,tvClosed=false,ended=false,lateCands=[],lateTimer=0,wake=null,route="unknown";
+try{peerId=sessionStorage.getItem("castly-peer-"+P.t)}catch(x){}
+if(!peerId){peerId=C.randomId(16);try{sessionStorage.setItem("castly-peer-"+P.t,peerId)}catch(x){}}
+
+function nonce(){return C.randomId(16)}
+function signal(obj){obj.peer=peerId;obj.n=obj.n||nonce();obj.ts=Date.now();
+ return C.seal(key,toTv,obj).then(function(env){return C.publish(toTv,env)}).then(function(){return obj.n})}
+function onSignal(text){C.open(key,toMe,text).then(function(m){
+  if(!m||!m.n||seen[m.n])return;seen[m.n]=1;
+  if(m.ty==="answer"&&m.re===offerN&&pc&&pc.signalingState==="have-local-offer"){
+   pc.setRemoteDescription({type:"answer",sdp:m.sdp}).then(function(){(m.cands||[]).forEach(addCand)}).catch(function(){});
+  }else if(m.ty==="cand"&&pc){(m.cands||[]).forEach(addCand);if(!connected)conn("",t.c_ice2)}
+  else if(m.ty==="busy"&&m.re===offerN){stopConnecting();conn("bad",t.busy)}
+ }).catch(function(){})}
+function addCand(c){if(!pc||!c||!c.c)return;pc.addIceCandidate({candidate:c.c,sdpMid:c.m,sdpMLineIndex:c.i}).catch(function(){})}
+
+// ─── Connection ───
+function connect(){
+ if(ended||tvClosed)return;
+ if(!everConnected&&P.e&&Date.now()/1000>P.e){conn("bad",t.expired);return}
+ closePc();connected=false;pickEnabled(false);conn("",everConnected?t.c_re:t.c_sig);
+ pc=new RTCPeerConnection({iceServers:C.ICE_SERVERS});
+ dc=pc.createDataChannel("castly",{ordered:true});dc.binaryType="arraybuffer";dc.bufferedAmountLowThreshold=BUF_LOW;
+ var myPc=pc,myDc=dc,offerSent=false;
+ dc.onopen=function(){if(myDc!==dc)return;clearTimeout(connectTimer);clearTimeout(phaseTimer);connected=true;everConnected=true;reconnects=0;askWake()};
+ dc.onmessage=function(e){if(myDc===dc&&typeof e.data==="string")onTv(e.data)};
+ dc.onclose=function(){if(myDc===dc)lost()};
+ pc.oniceconnectionstatechange=function(){if(myPc!==pc)return;var s=pc.iceConnectionState;
+  if(s==="failed"){if(connected)lost();else fail()}
+  if(s==="disconnected"&&connected)setTimeout(function(){if(myPc===pc&&pc.iceConnectionState==="disconnected")lost()},4000)};
+ pc.onicecandidate=function(e){if(myPc!==pc||!e.candidate||!offerSent)return;
+  lateCands.push({c:e.candidate.candidate,m:e.candidate.sdpMid,i:e.candidate.sdpMLineIndex});
+  if(!lateTimer)lateTimer=setTimeout(function(){lateTimer=0;var b=lateCands.splice(0,8);if(b.length&&myPc===pc&&!connected)signal({ty:"cand",cands:b}).catch(function(){})},700)};
+ pc.createOffer().then(function(o){return pc.setLocalDescription(o)}).then(function(){return new Promise(function(r){
+   if(pc.iceGatheringState==="complete")return r();var to=setTimeout(r,3000);
+   pc.addEventListener("icegatheringstatechange",function(){if(pc.iceGatheringState==="complete"){clearTimeout(to);r()}})})})
+ .then(function(){if(myPc!==pc)return;offerSent=true;conn("",t.c_ice);
+   offerN=nonce();   // set before publishing: the answer may arrive before the POST resolves
+   return signal({ty:"offer",n:offerN,sdp:pc.localDescription.sdp})})
+ .catch(function(){if(myPc===pc)fail()});
+ connectTimer=setTimeout(function(){if(myPc===pc&&!connected)fail()},CONNECT_MS);
+ phaseTimer=setTimeout(function(){if(myPc===pc&&!connected)conn("",t.c_ice2)},9000);
+}
+function closePc(){try{dc&&dc.close()}catch(x){}try{pc&&pc.close()}catch(x){}dc=null;pc=null;clearTimeout(connectTimer);clearTimeout(phaseTimer)}
+function stopConnecting(){closePc();connected=false;pickEnabled(false)}
+function fail(){
+ stopConnecting();
+ if(everConnected&&reconnects<MAX_RECONNECTS){reconnects++;setTimeout(connect,2000*reconnects);return}
+ conn("bad",t.c_fail,t.c_fail2);showRetry();
+ if(active){var a=active;active=null;markFail(a,"conn")}
+}
+function lost(){if(!connected)return;connected=false;stopPump();if(tvClosed||ended)return;
+ if(reconnects<MAX_RECONNECTS){reconnects++;conn("",t.c_re);setTimeout(connect,1500)}else fail()}
+function showRetry(){var b=g("retryBtn");if(b){b.classList.remove("hidden");return}
+ b=document.createElement("button");b.id="retryBtn";b.type="button";b.className="btn primary";b.textContent=t.retry;b.style.marginTop="10px";
+ b.onclick=function(){b.classList.add("hidden");reconnects=0;connect()};g("conn").lastChild.appendChild(b)}
+function askWake(){try{if(navigator.wakeLock&&!wake)navigator.wakeLock.request("screen").then(function(w){wake=w;w.addEventListener("release",function(){wake=null})}).catch(function(){})}catch(x){}}
+document.addEventListener("visibilitychange",function(){if(document.visibilityState==="visible"){if(connected)askWake();else if(everConnected&&!pc&&!tvClosed&&!ended){reconnects=0;connect()}}});
+
+// ─── Messages from the TV (DataChannel) ───
+function onTv(text){var m;try{m=JSON.parse(text)}catch(x){return}
+ if(m.ty==="hi"){if(m.max>0)MAX=m.max;route=m.route||"unknown";g("note").textContent=fmt(t.note,size(MAX));
+  conn("ok",t.c_ok,t.c_route[route]||t.c_route.unknown);pickEnabled(true);g("endRow").classList.remove("hidden");
+  if(active)announce(active);else next();return}
+ if(m.ty==="closed"){tvClosed=true;stopConnecting();conn("bad",t.closed);sub&&sub.close();return}
+ var it=active;if(!it||m.id!==it.id)return;
+ if(m.ty==="ready")pump(it,m.offset||0);
+ else if(m.ty==="need")pump(it,m.offset||0);
+ else if(m.ty==="ack")progress(it,m.received);
+ else if(m.ty==="verifying"){stopPump();it.meta.textContent=t.verify;it.bar.style.width="100%"}
+ else if(m.ty==="done"){stopPump();finish(it,true)}
+ else if(m.ty==="reject"||m.ty==="error"){stopPump();markFail(it,m.error);active=null;next()}
+ else if(m.ty==="cancelled"){/* already shown */}
+}
+
+// ─── Files ───
+var queue=[],active=null,pumpGen=0;
+function add(file){
+ var li=document.createElement("li"),a=document.createElement("div"),m=document.createElement("div"),b=document.createElement("div"),row=document.createElement("div");
+ a.className="name";a.textContent=file.name;m.className="meta";m.textContent=size(file.size)+" · "+t.wait;
+ b.className="bar";b.innerHTML="<i></i>";row.className="row";li.appendChild(a);li.appendChild(m);li.appendChild(b);li.appendChild(row);g("list").appendChild(li);
+ var it={file:file,li:li,meta:m,bar:b.firstChild,row:row,id:C.randomId(24),sha:null,cancelled:false,state:"wait",t0:0,b0:0};
+ it.cx=button(t.cancel,function(){cancelItem(it)});row.appendChild(it.cx);
+ if(file.size>MAX){markFail(it,"too_large");return null}
+ if(!file.size){markFail(it,"empty");return null}
+ return it;
+}
+function button(label,fn){var x=document.createElement("button");x.type="button";x.className="btn";x.textContent=label;x.onclick=fn;return x}
+function markFail(it,code){it.state="fail";it.li.className="err";it.bar.style.width="100%";it.cx.classList.add("hidden");
+ var msg=t.e[code]||t.e.protocol;it.meta.textContent=code==="too_large"?fmt(msg,size(MAX)):msg;
+ if(code!=="too_large"&&code!=="type"&&code!=="empty"){
+  if(!it.again){it.again=button("↻ "+t.again,function(){it.again.classList.add("hidden");it.cx.classList.remove("hidden");it.li.className="";it.bar.style.width="0";
+   it.id=C.randomId(24);it.cancelled=false;it.state="wait";it.meta.textContent=size(it.file.size)+" · "+t.wait;queue.push(it);next()});it.row.appendChild(it.again)}
+  else it.again.classList.remove("hidden")}}
+function cancelItem(it){if(it.cancelled||it.state==="done")return;it.cancelled=true;
+ var i=queue.indexOf(it);if(i>=0)queue.splice(i,1);
+ if(active===it){stopPump();sendTv({ty:"cancel",id:it.id});active=null;markFail(it,"cancelled");next()}else markFail(it,"cancelled")}
+function finish(it,ok){if(ok){it.state="done";it.li.className="ok";it.bar.style.width="100%";it.cx.classList.add("hidden");it.meta.textContent=t.done}
+ active=null;next()}
+function sendTv(obj){try{if(dc&&dc.readyState==="open"){dc.send(JSON.stringify(obj));return true}}catch(x){}return false}
+function next(){
+ if(active||!connected||!queue.length)return;
+ var it=queue.shift();active=it;
+ if(it.sha){announce(it);return}
+ it.state="hash";it.meta.textContent=t.hash+"0%";
+ C.hashBlob(it.file,function(done){it.meta.textContent=t.hash+Math.round(done*100/it.file.size)+"%"},function(){return it.cancelled})
+  .then(function(h){if(it.cancelled)return;it.sha=h;if(active===it)announce(it)})
+  .catch(function(){if(it.cancelled)return;active=null;markFail(it,"read");next()});
+}
+function announce(it){if(!it.sha||!connected)return;it.state="send";
+ sendTv({ty:"file",id:it.id,name:it.file.name,size:it.file.size,sha256:it.sha})}
+function progress(it,received){var p=Math.min(100,Math.round(received*100/it.file.size)),now=Date.now(),speed="";
+ if(!it.t0){it.t0=now;it.b0=received}else if(now-it.t0>800){var mbs=(received-it.b0)/1048576/((now-it.t0)/1000);if(mbs>0)speed=" · "+mbs.toFixed(mbs<10?1:0)+" MB/s"}
+ it.bar.style.width=p+"%";it.meta.textContent=t.up+p+"%"+speed}
+function stopPump(){pumpGen++}
+
+/** Sends it.file from offset as 16 KB frames [0x01][u32 index][payload], 1 MB read at a time, with backpressure. */
+function pump(it,offset){
+ var gen=++pumpGen,CH=16384,file=it.file;offset=Math.floor(offset/CH)*CH;it.t0=0;progress(it,offset);
+ function alive(){return gen===pumpGen&&active===it&&!it.cancelled&&dc&&dc.readyState==="open"}
+ function waitLow(){return new Promise(function(res){if(dc.bufferedAmount<=BUF_LOW)return res();
+  var iv=setInterval(function(){if(!alive()||dc.bufferedAmount<=BUF_LOW){clearInterval(iv);dc.onbufferedamountlow=null;res()}},50);
+  dc.onbufferedamountlow=function(){clearInterval(iv);dc.onbufferedamountlow=null;res()}})}
+ function step(){
+  if(!alive())return;
+  if(offset>=file.size){sendTv({ty:"end",id:it.id});return}
+  var end=Math.min(offset+SLICE,file.size);
+  C.readSlice(file,offset,end).then(function(buf){
+   if(!alive())return;
+   var bytes=new Uint8Array(buf),pos=0;
+   function sendSome(){
+    if(!alive())return;
+    while(pos<bytes.length){
+     if(dc.bufferedAmount>BUF_HIGH){waitLow().then(sendSome);return}
+     var n=Math.min(CH,bytes.length-pos),idx=(offset+pos)/CH,f=new Uint8Array(5+n);
+     f[0]=1;f[1]=(idx>>>24)&255;f[2]=(idx>>>16)&255;f[3]=(idx>>>8)&255;f[4]=idx&255;f.set(bytes.subarray(pos,pos+n),5);
+     try{dc.send(f.buffer)}catch(x){return}
+     pos+=n}
+    offset=end;step()}
+   sendSome()}).catch(function(){if(!alive())return;stopPump();sendTv({ty:"cancel",id:it.id});active=null;markFail(it,"read");next()})}
+ step()}
+
+g("f").addEventListener("change",function(e){var files=e.target.files;
+ for(var i=0;i<files.length;i++){var it=add(files[i]);if(it)queue.push(it)}e.target.value="";next()});
+g("end").onclick=function(){ended=true;sendTv({ty:"bye"});setTimeout(function(){stopConnecting();sub&&sub.close();conn("",t.ended);g("endRow").classList.add("hidden")},300)};
+
+C.importKey(C.unb64u(P.k)).then(function(k){key=k;
+ sub=C.subscribe(toMe,Date.now()/1000-120,onSignal);connect()}).catch(function(){conn("bad",t.noqr)});
+})();
+</script>
+</body>
+</html>
